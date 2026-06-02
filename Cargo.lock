@@ -823,6 +823,8 @@ dependencies = [
 [[package]]
 name = "wilayah"
 version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82a69946eb4818106a425dc574632305759b82ef5334d0a28a6e15f6288d5f20"
 dependencies = [
  "serde",
  "ureq",

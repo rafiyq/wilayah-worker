@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use serde::Serialize;
 use worker::*;
-use wilayah::{haversine_km, location_from_village, LocateMethod, Location, Village};
+use wilayah::{haversine_km, location_from_village, Location, Village};
 
 #[derive(serde::Deserialize, Debug, Clone, Serialize)]
 struct VillageRow {
@@ -315,7 +315,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
                 if let Some((village_row, dist_km)) = candidates.into_iter().next() {
                     let village = Village::from(&village_row);
-                    if let Some(loc) = location_from_village(&village, dist_km, LocateMethod::Nearest) {
+                    if let Some(loc) = location_from_village(&village, dist_km) {
                         return with_cors(Response::from_json(&LocateResponse {
                             result: Some(loc),
                         }));

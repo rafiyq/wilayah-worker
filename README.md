@@ -38,34 +38,63 @@ rustup target add wasm32-unknown-unknown
 wrangler d1 create wilayah-locations
 ```
 
-Copy the `database_id` from the output and update `wrangler.toml`:
+Copy the `database_id` from the output and create your local `wrangler.toml` from the template:
 
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "wilayah-locations"
-database_id = "YOUR_DATABASE_ID_HERE"
+```bash
+cp wrangler.template.toml wrangler.toml
+# Edit wrangler.toml to fill in your database_id
 ```
-
-**Note:** The `database_id` in `wrangler.toml` uses a placeholder (`REPLACE_WITH_YOUR_DATABASE_ID`). For local development, replace it manually. For CI deployment, it's substituted automatically from a GitHub secret (see below).
 
 ### 3. Import data
 
-First, ensure the wilayah database exists at `../../data/locations.db`. If not:
+Download the pre-built `locations.db` from the latest release:
 
 ```bash
-cd ../..  # back to wilayah repo root
-cargo run --example build_db --features build-db
-cd examples/cloudflare-worker
+curl -L -o locations.db https://github.com/rafiyq/wilayah/releases/download/v0.5.0/locations.db
 ```
 
-Then run the import script:
+Apply the schema and import data into your local D1:
 
 ```bash
-./import_db.sh
-```
+# Apply schema
+wrangler d1 execute DB --local --file=schema.sql
 
-This creates the schema, exports data from the local SQLite database, and imports it into D1 in batches. It also exports `db_meta` rows if present.
+# Export data to SQL
+sqlite3 locations.db -cmd ".mode insert locations" \
+  "SELECT kode, nama, kecamatan, kota, provinsi, lat, lon FROM locations WHERE lat != 0 OR lon != 0 ORDER BY id;" \
+  > locations_data.sql
+
+# Import in batches (D1 local has limits on large queries)
+BATCH_SIZE=5000
+CURRENT_BATCH=""
+ROW_COUNT=0
+BATCH_NUM=0
+
+while IFS= read -r line; do
+  CURRENT_BATCH="${CURRENT_BATCH}${line}"$'\n'
+  ROW_COUNT=$((ROW_COUNT + 1))
+  if [ "$ROW_COUNT" -ge "$BATCH_SIZE" ]; then
+    BATCH_NUM=$((BATCH_NUM + 1))
+    echo "Importing batch ${BATCH_NUM} (${ROW_COUNT} rows)..."
+    echo "PRAGMA ignore_check_constraints = true;" > batch_tmp.sql
+    echo "$CURRENT_BATCH" >> batch_tmp.sql
+    wrangler d1 execute DB --local --file=batch_tmp.sql
+    CURRENT_BATCH=""
+    ROW_COUNT=0
+  fi
+done < locations_data.sql
+
+# Import remaining rows
+if [ "$ROW_COUNT" -gt 0 ]; then
+  BATCH_NUM=$((BATCH_NUM + 1))
+  echo "Importing final batch ${BATCH_NUM} (${ROW_COUNT} rows)..."
+  echo "PRAGMA ignore_check_constraints = true;" > batch_tmp.sql
+  echo "$CURRENT_BATCH" >> batch_tmp.sql
+  wrangler d1 execute DB --local --file=batch_tmp.sql
+fi
+
+rm -f batch_tmp.sql locations_data.sql
+```
 
 ### 4. Set up authentication
 
@@ -105,33 +134,38 @@ curl -X PUT https://your-worker.workers.dev/update/meta \
 npx wrangler dev
 ```
 
-### 7. Deploy
+### 7. Deploy manually
 
 ```bash
 npx wrangler deploy
 ```
 
-### 8. CI Deployment (GitHub Actions)
+## CI Deployment (GitHub Actions)
 
-A `deploy-worker.yml` workflow is included for automated deployment. It substitutes the `database_id` placeholder in `wrangler.toml` from a GitHub secret before running `wrangler deploy`.
+This project uses a tag-based release workflow. When you push a tag starting with `v`, GitHub Actions will:
 
-**Required GitHub secrets:**
+1. **Populate D1:** Re-populate the D1 database with data from the latest release.
+2. **Deploy Worker:** Build and deploy the Cloudflare Worker.
 
-| Secret | Description |
-|--------|-------------|
-| `CLOUDFLARE_API_TOKEN` | Wrangler API token (from Cloudflare dashboard) |
-| `D1_DATABASE_ID` | The D1 database ID from `wrangler d1 create` |
+### Required GitHub secrets and variables
 
-**How it works:**
+Go to **Settings → Secrets and variables → Actions** in your GitHub repository and set:
 
-The workflow runs `sed` to replace the placeholder before deploying:
+| Name | Type | Description |
+|------|------|-------------|
+| `CLOUDFLARE_API_TOKEN` | Secret | Wrangler API token (from Cloudflare dashboard) |
+| `CLOUDFLARE_ACCOUNT_ID` | Secret | Your Cloudflare account ID |
+| `D1_DATABASE_ID` | Variable | The D1 database ID from `wrangler d1 create` |
+
+### How to release
 
 ```bash
-sed -i "s/REPLACE_WITH_YOUR_DATABASE_ID/$D1_DATABASE_ID/g" wrangler.toml
-npx wrangler deploy
+# Create a new release tag
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-The workflow triggers on manual dispatch (`workflow_dispatch`) and on pushes that modify `examples/cloudflare-worker/`.
+This will trigger the workflow, which will first populate D1 with the latest data, then deploy the worker.
 
 ## Differences from the axum server example
 
