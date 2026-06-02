@@ -1,0 +1,11 @@
+name = "wilayah-api"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-05-28"
+
+[build]
+command = "cargo install worker-build && worker-build --release"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "wilayah-locations"
+database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
