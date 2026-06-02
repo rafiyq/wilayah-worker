@@ -66,8 +66,8 @@ jobs:
             if [ "$ROW_COUNT" -ge "$BATCH_SIZE" ]; then
               BATCH_NUM=$((BATCH_NUM + 1))
               echo "Importing batch ${BATCH_NUM} (${ROW_COUNT} rows)..."
-              echo -e "PRAGMA ignore_check_constraints = true;\n${CURRENT_BATCH}" | \
-                npx wrangler d1 execute DB --remote --file=\-
+              printf "PRAGMA ignore_check_constraints = true;\n%s\n" "$CURRENT_BATCH" > batch.sql
+              npx wrangler d1 execute DB --remote --file=batch.sql
               CURRENT_BATCH=""
               ROW_COUNT=0
             fi
@@ -77,8 +77,8 @@ jobs:
           if [ "$ROW_COUNT" -gt 0 ]; then
             BATCH_NUM=$((BATCH_NUM + 1))
             echo "Importing final batch ${BATCH_NUM} (${ROW_COUNT} rows)..."
-            echo -e "PRAGMA ignore_check_constraints = true;\n${CURRENT_BATCH}" | \
-              npx wrangler d1 execute DB --remote --file=\-
+            printf "PRAGMA ignore_check_constraints = true;\n%s\n" "$CURRENT_BATCH" > batch.sql
+            npx wrangler d1 execute DB --remote --file=batch.sql
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
