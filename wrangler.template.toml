@@ -1,4 +1,4 @@
-name = "wilayah-api"
+name = "api"
 main = "build/worker/shim.mjs"
 compatibility_date = "2026-05-28"
 
