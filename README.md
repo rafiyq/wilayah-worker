@@ -176,10 +176,12 @@ An interactive demo is available in `examples/web-client/index.html`. Open it in
 
 ## CI Deployment (GitHub Actions)
 
-This project uses a tag-based release workflow. When you push a tag starting with `v`, GitHub Actions will:
+This project uses two GitHub Actions workflows:
 
-1. **Populate D1:** Re-populate the D1 database with data from the latest release.
-2. **Deploy Worker:** Build and deploy the Cloudflare Worker.
+| Workflow | Trigger | Description |
+|----------|---------|-------------|
+| `release.yml` | Push tag `v*` | Builds and deploys the Cloudflare Worker |
+| `populate-d1.yml` | Manual (`workflow_dispatch`) | Repopulates the D1 database from the latest release |
 
 ### Required GitHub secrets and variables
 
@@ -199,7 +201,13 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-This will trigger the workflow, which will first populate D1 with the latest data, then deploy the worker.
+This triggers `release.yml`, which deploys the worker.
+
+### How to populate D1
+
+Go to **Actions → Populate D1 → Run workflow** in your GitHub repository. This triggers `populate-d1.yml`, which downloads the latest `locations.db`, clears the D1 table, and re-imports all data.
+
+Run this whenever the underlying village data changes (e.g., after a new `locations.db` release).
 
 ## Differences from the axum server example
 

@@ -1,0 +1,102 @@
+name: Populate D1
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  populate:
+    name: Populate D1 Database
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render wrangler.toml
+        shell: bash
+        run: |
+          sed 's/\${D1_DATABASE_ID}/${{ vars.D1_DATABASE_ID }}/g' \
+            wrangler.template.toml > wrangler.toml
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wrangler
+        run: npm install -g wrangler
+
+      - name: Install sqlite3
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+
+      - name: Download locations.db
+        run: |
+          curl -L -o locations.db \
+            https://github.com/rafiyq/wilayah/releases/download/v0.5.0/locations.db
+
+      - name: Apply schema
+        run: npx wrangler d1 execute DB --remote --file=schema.sql
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Clear existing data
+        run: npx wrangler d1 execute DB --remote --command="DELETE FROM locations;"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Export data and populate D1
+        shell: bash
+        run: |
+          sqlite3 locations.db -cmd ".mode insert locations" \
+            "SELECT id, kode, nama, kecamatan, kota, provinsi, lat, lon FROM locations WHERE lat != 0 OR lon != 0 ORDER BY id;" \
+            > locations_data.sql
+
+          if [ ! -s locations_data.sql ]; then
+            echo "No data found in locations.db"
+            exit 1
+          fi
+
+          # Split into batches of 5000 INSERT statements
+          BATCH_SIZE=5000
+          CURRENT_BATCH=""
+          ROW_COUNT=0
+          BATCH_NUM=0
+
+          while IFS= read -r line; do
+            CURRENT_BATCH="${CURRENT_BATCH}${line}"
+            ROW_COUNT=$((ROW_COUNT + 1))
+            if [ "$ROW_COUNT" -ge "$BATCH_SIZE" ]; then
+              BATCH_NUM=$((BATCH_NUM + 1))
+              echo "Importing batch ${BATCH_NUM} (${ROW_COUNT} rows)..."
+              printf "PRAGMA ignore_check_constraints = true;\n%s\n" "$CURRENT_BATCH" > batch.sql
+              npx wrangler d1 execute DB --remote --file=batch.sql
+              CURRENT_BATCH=""
+              ROW_COUNT=0
+            fi
+          done < locations_data.sql
+
+          # Import remaining rows
+          if [ "$ROW_COUNT" -gt 0 ]; then
+            BATCH_NUM=$((BATCH_NUM + 1))
+            echo "Importing final batch ${BATCH_NUM} (${ROW_COUNT} rows)..."
+            printf "PRAGMA ignore_check_constraints = true;\n%s\n" "$CURRENT_BATCH" > batch.sql
+            npx wrangler d1 execute DB --remote --file=batch.sql
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Export and import db_meta (optional)
+        shell: bash
+        run: |
+          sqlite3 locations.db -cmd ".mode insert db_meta" \
+            "SELECT key, value FROM db_meta;" 2>/dev/null > db_meta.sql || true
+
+          if [ -s db_meta.sql ]; then
+            echo "Importing meta rows..."
+            npx wrangler d1 execute DB --remote --file=db_meta.sql
+          else
+            echo "No db_meta data found, skipping."
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
