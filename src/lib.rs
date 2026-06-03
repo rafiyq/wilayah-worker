@@ -34,6 +34,14 @@ struct IndexResponse {
     name: String,
     version: String,
     village_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lat: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lon: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nearest: Option<Vec<Village>>,
 }
 
 #[derive(Serialize)]
@@ -132,17 +140,93 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let router = Router::new();
 
     router
-        .get_async("/", |_req, ctx| async move {
+        .get_async("/", |req, ctx| async move {
             let d1 = ctx.env.d1("DB")?;
             let count: i64 = d1
                 .prepare("SELECT COUNT(*) as cnt FROM locations")
                 .first::<i64>(Some("cnt"))
                 .await?
                 .unwrap_or(0);
+
+            let url = req.url()?;
+            let mut source: Option<String> = None;
+            let mut lat: Option<f64> = None;
+            let mut lon: Option<f64> = None;
+
+            // 1. Try query params first (GPS from device)
+            if let (Some(lat_val), Some(lon_val)) = (parse_f64_param(&url, "lat"), parse_f64_param(&url, "lon")) {
+                if (-90.0..=90.0).contains(&lat_val) && (-180.0..=180.0).contains(&lon_val) {
+                    lat = Some(lat_val);
+                    lon = Some(lon_val);
+                    source = Some("gps".to_string());
+                }
+            }
+
+            // 2. Fall back to Cloudflare IP geolocation headers
+            if lat.is_none() {
+                let cf_lat_str = req.headers().get("CF-IPLatitude").ok().flatten();
+                let cf_lon_str = req.headers().get("CF-IPLongitude").ok().flatten();
+                if let (Some(lat_val), Some(lon_val)) = (
+                    cf_lat_str.and_then(|s| s.parse().ok()),
+                    cf_lon_str.and_then(|s| s.parse().ok())
+                ) {
+                    lat = Some(lat_val);
+                    lon = Some(lon_val);
+                    source = Some("ip".to_string());
+                }
+            }
+
+            let mut nearest: Option<Vec<Village>> = None;
+
+            if let (Some(lat_val), Some(lon_val)) = (lat, lon) {
+                let limit = 5;
+                let deltas: [f64; 10] = [0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 15.0, 45.0, 180.0];
+                for &delta in &deltas {
+                    let sql = "SELECT kode, nama, kecamatan, kota, provinsi, lat, lon \
+                        FROM locations \
+                        WHERE lat BETWEEN ?1 AND ?2 AND lon BETWEEN ?3 AND ?4 \
+                        LIMIT 200";
+                    let stmt = d1.prepare(sql);
+                    let query = stmt.bind(&[
+                        (lat_val - delta).into(),
+                        (lat_val + delta).into(),
+                        (lon_val - delta).into(),
+                        (lon_val + delta).into(),
+                    ])?;
+
+                    let rows: Vec<VillageRow> = query.all().await?.results()?;
+                    if rows.is_empty() {
+                        continue;
+                    }
+
+                    let mut candidates: Vec<Village> = rows
+                        .iter()
+                        .map(|r| {
+                            let mut v = Village::from(r);
+                            v.dist_km = Some(haversine_km(lat_val, lon_val, r.lat, r.lon));
+                            v
+                        })
+                        .collect();
+                    candidates.sort_by(|a, b| {
+                        a.dist_km
+                            .unwrap()
+                            .partial_cmp(&b.dist_km.unwrap())
+                            .unwrap()
+                    });
+                    candidates.truncate(limit);
+                    nearest = Some(candidates);
+                    break;
+                }
+            }
+
             with_cors(Response::from_json(&IndexResponse {
                 name: "wilayah".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 village_count: count,
+                source,
+                lat,
+                lon,
+                nearest,
             }))
         })
         .get_async("/nearest", |req, ctx| async move {

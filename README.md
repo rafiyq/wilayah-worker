@@ -6,7 +6,7 @@ A Cloudflare Worker that serves the wilayah Indonesian village lookup API, backe
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /` | API info and village count |
+| `GET /` | API info, village count, and optionally nearest villages by location |
 | `GET /nearest?lat=&lon=&limit=` | Find nearest villages by coordinates |
 | `GET /search?q=&limit=` | Search villages by name (LIKE) |
 | `GET /code?q=` | Exact code lookup |
@@ -142,6 +142,37 @@ npx wrangler dev
 ```bash
 npx wrangler deploy
 ```
+
+## Device Location
+
+The `GET /` endpoint supports location-aware responses. It tries sources in this order:
+
+1. **`?lat=&lon=` query parameters** (e.g., from device GPS)
+2. **Cloudflare IP geolocation headers** (`CF-IPLatitude`, `CF-IPLongitude`)
+3. **No location** — returns API info + village count only
+
+### Example with GPS
+
+```javascript
+navigator.geolocation.getCurrentPosition(async (position) => {
+  const lat = position.coords.latitude;
+  const lon = position.coords.longitude;
+  const res = await fetch(`https://api.wilayah.workers.dev/?lat=${lat}&lon=${lon}`);
+  const data = await res.json();
+  console.log(data.nearest); // Array of nearby villages
+});
+```
+
+### Example with no location
+
+```bash
+curl https://api.wilayah.workers.dev/
+# Response: { "name": "wilayah", "version": "0.1.0", "village_count": 83468 }
+```
+
+### Web Client Example
+
+An interactive demo is available in `examples/web-client/index.html`. Open it in a browser, allow location access, and it will show the nearest villages to your current GPS position.
 
 ## CI Deployment (GitHub Actions)
 

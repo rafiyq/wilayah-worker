@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wilayah API - Device Location Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+        button {
+            padding: 12px 24px;
+            margin: 10px 5px 10px 0;
+            cursor: pointer;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            background: #007bff;
+            color: white;
+        }
+        button:hover { background: #0056b3; }
+        button.secondary { background: #6c757d; }
+        button.secondary:hover { background: #545b62; }
+        #results { margin-top: 20px; }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            border: 1px solid #e9ecef;
+        }
+        .village {
+            border: 1px solid #ddd;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background: #fafafa;
+        }
+        .village h3 { margin: 0 0 5px 0; }
+        .village p { margin: 3px 0; color: #555; }
+        .error { color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 5px; }
+        .info { color: #0c5460; background: #d1ecf1; padding: 10px; border-radius: 5px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>Wilayah API - Device Location Demo</h1>
+    <p>This demo shows how to use your device's GPS to find nearby Indonesian villages using the Wilayah API.</p>
+
+    <button onclick="useGPS()">📍 Use Device GPS</button>
+    <button class="secondary" onclick="checkAPI()">🔍 Check API (No Location)</button>
+
+    <div id="results"></div>
+
+    <script>
+        const API_URL = 'https://api.wilayah.workers.dev/'; // Change to your API URL if different
+
+        function displayJSON(data) {
+            const results = document.getElementById('results');
+            results.innerHTML = '<h2>Response</h2><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+        }
+
+        function displayVillages(villages, source, lat, lon) {
+            const results = document.getElementById('results');
+            let html = '<h2>Response</h2>';
+            html += '<p class="info">Source: ' + source + ' | Lat: ' + lat.toFixed(4) + ', Lon: ' + lon.toFixed(4) + '</p>';
+            html += '<h3>Nearest Villages:</h3>';
+            villages.forEach(v => {
+                html += '<div class="village">';
+                html += '<h3>' + v.name + ' <small>(' + v.code + ')</small></h3>';
+                html += '<p><strong>District:</strong> ' + (v.district || 'N/A') + '</p>';
+                html += '<p><strong>City:</strong> ' + (v.city || 'N/A') + '</p>';
+                html += '<p><strong>Province:</strong> ' + (v.province || 'N/A') + '</p>';
+                if (v.dist_km) html += '<p><strong>Distance:</strong> ' + v.dist_km.toFixed(2) + ' km</p>';
+                html += '</div>';
+            });
+            results.innerHTML = html;
+        }
+
+        function displayError(msg) {
+            const results = document.getElementById('results');
+            results.innerHTML = '<p class="error">Error: ' + msg + '</p>';
+        }
+
+        async function checkAPI() {
+            try {
+                const res = await fetch(API_URL);
+                const data = await res.json();
+                displayJSON(data);
+            } catch (err) {
+                displayError(err.message);
+            }
+        }
+
+        function useGPS() {
+            if (!navigator.geolocation) {
+                displayError('Geolocation is not supported by your browser.');
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+
+                    try {
+                        const res = await fetch(`${API_URL}?lat=${lat}&lon=${lon}`);
+                        const data = await res.json();
+                        if (data.nearest && data.nearest.length > 0) {
+                            displayVillages(data.nearest, 'GPS', lat, lon);
+                        } else {
+                            displayJSON(data);
+                        }
+                    } catch (err) {
+                        displayError(err.message);
+                    }
+                },
+                (error) => {
+                    let msg = 'An unknown error occurred.';
+                    switch(error.code) {
+                        case error.PERMISSION_DENIED: msg = 'You denied the request for Geolocation. Please enable location permissions in your browser.'; break;
+                        case error.POSITION_UNAVAILABLE: msg = 'Location information is unavailable. Try again later.'; break;
+                        case error.TIMEOUT: msg = 'The request to get user location timed out. Try again.'; break;
+                    }
+                    displayError(msg);
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+        }
+    </script>
+</body>
+</html>
