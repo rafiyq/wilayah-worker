@@ -59,9 +59,12 @@ Apply the schema and import data into your local D1:
 # Apply schema
 wrangler d1 execute DB --local --file=schema.sql
 
+# Clear existing data (for re-population)
+wrangler d1 execute DB --local --command="DELETE FROM locations;"
+
 # Export data to SQL
 sqlite3 locations.db -cmd ".mode insert locations" \
-  "SELECT kode, nama, kecamatan, kota, provinsi, lat, lon FROM locations WHERE lat != 0 OR lon != 0 ORDER BY id;" \
+  "SELECT id, kode, nama, kecamatan, kota, provinsi, lat, lon FROM locations WHERE lat != 0 OR lon != 0 ORDER BY id;" \
   > locations_data.sql
 
 # Import in batches (D1 local has limits on large queries)
