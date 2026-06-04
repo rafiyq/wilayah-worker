@@ -135,12 +135,24 @@ fn parse_usize_param(url: &Url, key: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+const INDEX_HTML: &str = include_str!("../examples/web-client/index.html");
+
 #[event(fetch)]
 async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let router = Router::new();
 
     router
         .get_async("/", |req, ctx| async move {
+            let is_html = req.headers().get("Accept")
+                .ok().flatten()
+                .map(|v| v.contains("text/html"))
+                .unwrap_or(false);
+            if is_html {
+                let mut resp = Response::ok(INDEX_HTML)?;
+                resp.headers_mut().set("Content-Type", "text/html; charset=utf-8")?;
+                return with_cors(Ok(resp));
+            }
+
             let d1 = ctx.env.d1("DB")?;
             let count: i64 = d1
                 .prepare("SELECT COUNT(*) as cnt FROM locations")
