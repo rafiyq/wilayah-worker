@@ -16,3 +16,4 @@ serde_json = "1"
 lto = true
 strip = true
 codegen-units = 1
+opt-level = "z"

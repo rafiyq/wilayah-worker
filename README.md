@@ -209,7 +209,16 @@ Go to **Actions → Populate D1 → Run workflow** in your GitHub repository. Th
 
 Run this whenever the underlying village data changes (e.g., after a new `locations.db` release).
 
-## Differences from the axum server example
+### Rate Limiting (WAF)
+
+To protect the API from abuse and stay within the Workers free tier (100,000 requests/day, 50 subrequests/invocation), configure a rate limiting rule in the Cloudflare dashboard:
+
+1. Go to **Security > WAF > Rate limiting rules**.
+2. Create a new rule targeting `api.wilayah.workers.dev/*` (or your subdomain).
+3. Set a threshold, for example: **10 requests per 10 seconds per IP address**.
+4. Select **Block** as the action.
+
+### Differences from the axum server example
 
 | Feature | axum `serve.rs` | Cloudflare Worker |
 |---------|-----------------|-------------------|

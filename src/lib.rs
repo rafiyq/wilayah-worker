@@ -91,6 +91,17 @@ struct MetaUpdatePayload {
     meta: BTreeMap<String, String>,
 }
 
+fn with_cors_and_cache(response: Result<Response>, max_age: u32) -> Result<Response> {
+    response.map(|r| {
+        let h = Headers::new();
+        h.set("Access-Control-Allow-Origin", "*").unwrap();
+        h.set("Access-Control-Allow-Methods", "GET, PUT, OPTIONS").unwrap();
+        h.set("Access-Control-Allow-Headers", "*").unwrap();
+        h.set("Cache-Control", &format!("public, max-age={}", max_age)).unwrap();
+        r.with_headers(h)
+    })
+}
+
 fn with_cors(response: Result<Response>) -> Result<Response> {
     response.map(|r| {
         let h = Headers::new();
@@ -197,7 +208,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     let sql = "SELECT kode, nama, kecamatan, kota, provinsi, lat, lon \
                         FROM locations \
                         WHERE lat BETWEEN ?1 AND ?2 AND lon BETWEEN ?3 AND ?4 \
-                        LIMIT 200";
+                        LIMIT 50";
                     let stmt = d1.prepare(sql);
                     let query = stmt.bind(&[
                         (lat_val - delta).into(),
@@ -231,7 +242,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 }
             }
 
-            with_cors(Response::from_json(&IndexResponse {
+            with_cors_and_cache(Response::from_json(&IndexResponse {
                 name: "wilayah".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 village_count: count,
@@ -239,7 +250,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 lat,
                 lon,
                 nearest,
-            }))
+            }), 30)
         })
         .get_async("/nearest", |req, ctx| async move {
             let url = req.url()?;
@@ -290,11 +301,11 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                         .unwrap()
                 });
                 candidates.truncate(limit);
-                return with_cors(Response::from_json(&NearestResponse {
+                return with_cors_and_cache(Response::from_json(&NearestResponse {
                     results: candidates,
-                }));
+                }), 30);
             }
-            with_cors(Response::from_json(&NearestResponse { results: vec![] }))
+            with_cors_and_cache(Response::from_json(&NearestResponse { results: vec![] }), 30)
         })
         .get_async("/search", |req, ctx| async move {
             let url = req.url()?;
@@ -314,7 +325,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             let stmt = d1.prepare(sql);
             let query = stmt.bind(&[pattern.into(), (limit as f64).into()])?;
             let rows: Vec<VillageRow> = query.all().await?.results()?;
-            with_cors(Response::from_json(&SearchResponse { results: rows }))
+            with_cors_and_cache(Response::from_json(&SearchResponse { results: rows }), 60)
         })
         .get_async("/code", |req, ctx| async move {
             let url = req.url()?;
@@ -327,7 +338,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 );
                 let query = stmt.bind(&[q.into()])?;
                 let result: Option<VillageRow> = query.first(None).await?;
-                return with_cors(Response::from_json(&CodeResponse { result }));
+                return with_cors_and_cache(Response::from_json(&CodeResponse { result }), 3600);
             }
 
             if let Some(prefix) = query_param(&url, "prefix") {
@@ -355,11 +366,11 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 ])?;
                 let rows: Vec<VillageRow> = query.all().await?.results()?;
                 let has_more = (offset + rows.len()) < total as usize;
-                return with_cors(Response::from_json(&CodePrefixResponse {
+                return with_cors_and_cache(Response::from_json(&CodePrefixResponse {
                     results: rows,
                     total,
                     has_more,
-                }));
+                }), 3600);
             }
 
             error_response(
@@ -412,13 +423,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 if let Some((village_row, dist_km)) = candidates.into_iter().next() {
                     let village = Village::from(&village_row);
                     if let Some(loc) = location_from_village(&village, dist_km) {
-                        return with_cors(Response::from_json(&LocateResponse {
+                        return with_cors_and_cache(Response::from_json(&LocateResponse {
                             result: Some(loc),
-                        }));
+                        }), 30);
                     }
                 }
             }
-        with_cors(Response::from_json(&LocateResponse { result: None }))
+        with_cors_and_cache(Response::from_json(&LocateResponse { result: None }), 30)
     })
         .put_async("/update", |mut req, ctx| async move {
             if let Err(_) = check_auth(&req, &ctx.env) {
@@ -456,6 +467,8 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             let row_refs: Vec<Vec<&D1Type>> = rows.iter().map(|r| r.iter().collect()).collect();
             let stmts = stmt.batch_bind(row_refs)?;
             let chunked: Vec<Vec<D1PreparedStatement>> = stmts.chunks(100).map(|c| c.to_vec()).collect();
+            // Each batch() call counts as 1 subrequest regardless of statement count,
+            // which fits comfortably within the free tier 50 subrequest limit.
             for chunk in chunked {
                 d1.batch(chunk).await?;
             }
