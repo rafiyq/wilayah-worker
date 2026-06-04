@@ -1,0 +1,40 @@
+name: Deploy
+
+on:
+    push:
+        tags:
+            - "v*"
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    deploy:
+        name: Deploy Worker
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Render wrangler.toml
+              shell: bash
+              run: |
+                  sed 's/\${D1_DATABASE_ID}/${{ vars.D1_DATABASE_ID }}/g' \
+                    wrangler.template.toml > wrangler.toml
+
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: wasm32-unknown-unknown
+
+            - name: Cache cargo dependencies
+              uses: Swatinem/rust-cache@v2
+
+            - name: Install worker-build
+              run: cargo install worker-build
+
+            - name: Deploy to Cloudflare
+              uses: cloudflare/wrangler-action@v3
+              with:
+                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  wranglerVersion: "latest"
