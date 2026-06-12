@@ -54,6 +54,17 @@ pub async fn search_villages(env: &Env, pattern: &str, limit: usize) -> Result<V
     Ok(rows)
 }
 
+pub async fn search_villages_exact(env: &Env, q: &str, limit: usize) -> Result<Vec<VillageRow>> {
+    let d1 = env.d1("DB")?;
+    let sql = "SELECT kode, nama, kecamatan, kota, provinsi, lat, lon \
+        FROM locations \
+        WHERE LOWER(nama) = LOWER(?1) \
+        LIMIT ?2";
+    let query = d1.prepare(sql).bind(&[q.into(), (limit as f64).into()])?;
+    let rows: Vec<VillageRow> = query.all().await?.results()?;
+    Ok(rows)
+}
+
 pub async fn get_village_by_code(env: &Env, code: &str) -> Result<Option<VillageRow>> {
     let d1 = env.d1("DB")?;
     let sql = "SELECT kode, nama, kecamatan, kota, provinsi, lat, lon \
